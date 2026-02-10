@@ -1,5 +1,7 @@
 #pragma once
 #include <QWidget>
+#include <QQuickWidget> // <--- Ajout
+
 namespace Ui { class NavigationPage; }
 class TelemetryData;
 
@@ -13,5 +15,7 @@ public:
 private:
     Ui::NavigationPage* ui;
     TelemetryData* m_t=nullptr;
-    int m_zoom = 12;
+
+    QQuickWidget* m_mapView = nullptr; // <--- Ajout
+    double m_currentZoom = 15.0;       // Pour gérer le zoom
 };

@@ -37,3 +37,8 @@ void TelemetryData::setAlertLevel(int v){
     if (m_alertLevel==v) return;
     m_alertLevel=v; emit alertLevelChanged();
 }
+void TelemetryData::setHeading(double v){
+    if (qFuzzyCompare(m_heading, v)) return;
+    m_heading = v;
+    emit headingChanged();
+}

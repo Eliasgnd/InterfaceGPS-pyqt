@@ -9,8 +9,12 @@ class TelemetryData : public QObject {
     Q_PROPERTY(bool gpsOk READ gpsOk WRITE setGpsOk NOTIFY gpsOkChanged)
     Q_PROPERTY(double lat READ lat WRITE setLat NOTIFY latChanged)
     Q_PROPERTY(double lon READ lon WRITE setLon NOTIFY lonChanged)
+    // --- AJOUT ---
+    Q_PROPERTY(double heading READ heading WRITE setHeading NOTIFY headingChanged)
+    // -------------
     Q_PROPERTY(QString alertText READ alertText WRITE setAlertText NOTIFY alertTextChanged)
-    Q_PROPERTY(int alertLevel READ alertLevel WRITE setAlertLevel NOTIFY alertLevelChanged) //0 none 1 warn 2 crit
+    Q_PROPERTY(int alertLevel READ alertLevel WRITE setAlertLevel NOTIFY alertLevelChanged)
+
 public:
     explicit TelemetryData(QObject* parent=nullptr);
 
@@ -20,6 +24,9 @@ public:
     bool gpsOk() const { return m_gpsOk; }
     double lat() const { return m_lat; }
     double lon() const { return m_lon; }
+    // --- AJOUT ---
+    double heading() const { return m_heading; }
+    // -------------
     QString alertText() const { return m_alertText; }
     int alertLevel() const { return m_alertLevel; }
 
@@ -30,6 +37,9 @@ public slots:
     void setGpsOk(bool v);
     void setLat(double v);
     void setLon(double v);
+    // --- AJOUT ---
+    void setHeading(double v);
+    // -------------
     void setAlertText(const QString& v);
     void setAlertLevel(int v);
 
@@ -40,6 +50,9 @@ signals:
     void gpsOkChanged();
     void latChanged();
     void lonChanged();
+    // --- AJOUT ---
+    void headingChanged();
+    // -------------
     void alertTextChanged();
     void alertLevelChanged();
 
@@ -50,6 +63,9 @@ private:
     bool m_gpsOk = true;
     double m_lat = 48.8566;
     double m_lon = 2.3522;
+    // --- AJOUT ---
+    double m_heading = 0.0;
+    // -------------
     QString m_alertText;
     int m_alertLevel = 0;
 };
