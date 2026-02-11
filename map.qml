@@ -6,6 +6,7 @@ Item {
     id: root
     width: 600; height: 400
 
+    // --- PROPRIÉTÉS ---
     property double carLat: 48.2715
     property double carLon: 4.0645
     property double carZoom: 17
@@ -13,6 +14,12 @@ Item {
     property double carSpeed: 0
     property bool autoFollow: true
     property string nextInstruction: ""
+    property int speedLimit: 0
+
+    // --- VARIABLES POUR L'OPTIMISATION API ---
+    // On stocke le moment (timestamp) et la position du dernier appel
+    property double lastApiCallTime: 0
+    property var lastApiCallPos: QtPositioning.coordinate(0, 0)
 
     signal routeInfoUpdated(string distance, string duration)
     signal suggestionsUpdated(string suggestions)
@@ -46,6 +53,30 @@ Item {
         }
     }
 
+    // --- FONCTION API SÉCURISÉE ---
+    function updateRealSpeedLimit(lat, lon) {
+        var http = new XMLHttpRequest()
+        var url = "https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/tilequery/"
+                  + lon + "," + lat + ".json?layers=road&access_token=" + mapboxApiKey
+
+        http.open("GET", url, true);
+        http.onreadystatechange = function() {
+            if (http.readyState == 4 && http.status == 200) {
+                try {
+                    var json = JSON.parse(http.responseText)
+                    if (json.features && json.features.length > 0) {
+                        var props = json.features[0].properties
+                        if (props.maxspeed) {
+                            var limit = parseInt(props.maxspeed)
+                            if (!isNaN(limit)) root.speedLimit = limit
+                        }
+                    }
+                } catch(e) { console.log("Erreur API: " + e) }
+            }
+        }
+        http.send();
+    }
+
     // Bandeau d'instructions
     Rectangle {
         id: instructionBanner
@@ -68,50 +99,26 @@ Item {
         plugin: mapPlugin
         center: QtPositioning.coordinate(carLat, carLon)
 
-        // Calcul du zoom (vitesse ou manuel)
         zoomLevel: autoFollow ? Math.max(12, 18 - (carSpeed / 50.0)) : carZoom
-
         copyrightsVisible: false
         bearing: autoFollow ? carHeading : 0
         tilt: autoFollow ? 45 : 0
 
-        // --- ANIMATIONS FLUIDES (LE COEUR DU SYSTEME) ---
-
-        // 1. Animation de la position (Recentrage et suivi GPS lisse)
+        // Animations
         Behavior on center {
             id: centerBehavior
-            enabled: !mapDragHandler.active // On coupe si l'utilisateur glisse la carte
+            enabled: !mapDragHandler.active
             CoordinateAnimation { duration: 800; easing.type: Easing.InOutQuad }
         }
-
-        // 2. Animation du Zoom (Boutons et zoom auto)
-        Behavior on zoomLevel {
-            NumberAnimation { duration: 500; easing.type: Easing.InOutQuad }
-        }
-
-        // 3. Animation de la Rotation et Inclinaison
+        Behavior on zoomLevel { NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
         Behavior on bearing { NumberAnimation { duration: 600 } }
         Behavior on tilt { NumberAnimation { duration: 600 } }
 
-        // --- GESTION DES INTERACTIONS ---
+        // Interactions
+        DragHandler { id: mapDragHandler; onActiveChanged: if (active) root.autoFollow = false }
+        WheelHandler { onWheel: (event) => { root.autoFollow = false; root.carZoom = map.zoomLevel } }
+        PinchHandler { onActiveChanged: if (active) root.autoFollow = false }
 
-        DragHandler {
-            id: mapDragHandler
-            onActiveChanged: if (active) root.autoFollow = false
-        }
-
-        WheelHandler {
-            onWheel: (event) => {
-                root.autoFollow = false
-                root.carZoom = map.zoomLevel
-            }
-        }
-
-        PinchHandler {
-            onActiveChanged: if (active) root.autoFollow = false
-        }
-
-        // Itinéraire et Voiture (Inchangés)
         MapItemView {
             model: routeModel
             delegate: MapRoute { route: routeData; line.color: "#1db7ff"; line.width: 10; opacity: 0.8; smooth: true }
@@ -134,7 +141,56 @@ Item {
         }
     }
 
-    // --- LOGIQUE (Inchangée) ---
+    // Panneau de limitation
+    Rectangle {
+        id: speedSign
+        width: 60; height: 60; radius: 30
+        color: "white"; border.color: "red"; border.width: 6
+        anchors { bottom: parent.bottom; left: parent.left; margins: 20 }
+        z: 20
+        Rectangle {
+            anchors.fill: parent; radius: 30
+            color: "red"; visible: carSpeed > speedLimit; opacity: 0.6
+            SequentialAnimation on opacity {
+                running: carSpeed > speedLimit
+                loops: Animation.Infinite
+                NumberAnimation { from: 0.2; to: 0.8; duration: 500 }
+                NumberAnimation { from: 0.8; to: 0.2; duration: 500 }
+            }
+        }
+        Text {
+            anchors.centerIn: parent
+            text: speedLimit; font { pixelSize: 24; bold: true }
+            color: "black"
+        }
+    }
+
+    // --- C'EST ICI QUE LA MAGIE OPÈRE ---
+    onCarLatChanged: {
+        if (autoFollow) map.center = QtPositioning.coordinate(carLat, carLon)
+
+        // 1. On récupère le temps actuel
+        var now = Date.now()
+
+        // 2. On calcule la distance parcourue depuis la dernière requête
+        var currentPos = QtPositioning.coordinate(carLat, carLon)
+        var distanceSinceLast = lastApiCallPos.distanceTo(currentPos)
+
+        // 3. LA CONDITION DOUBLE :
+        // - Il doit s'être écoulé 30 000 ms (30 sec)
+        // - ET on doit avoir bougé de plus de 100 mètres
+        if ( (now - lastApiCallTime > 30000) && (distanceSinceLast > 100) ) {
+
+            console.log("Mise à jour API Limite Vitesse (Eco-Mode)")
+            updateRealSpeedLimit(carLat, carLon)
+
+            // On enregistre les nouvelles références
+            lastApiCallTime = now
+            lastApiCallPos = currentPos
+        }
+    }
+
+    onCarLonChanged: { if (autoFollow) map.center = QtPositioning.coordinate(carLat, carLon) }
     onCarZoomChanged: { if (map.zoomLevel !== carZoom) autoFollow = false }
 
     function searchDestination(address) {
@@ -152,6 +208,11 @@ Item {
                         routeQuery.addWaypoint(QtPositioning.coordinate(c[1], c[0]))
                         routeModel.update()
                         autoFollow = true
+
+                        // Quand on change de destination, on force une mise à jour immédiate
+                        updateRealSpeedLimit(carLat, carLon)
+                        lastApiCallTime = Date.now()
+                        lastApiCallPos = QtPositioning.coordinate(carLat, carLon)
                     }
                 } catch(e) {}
             }
@@ -176,9 +237,6 @@ Item {
         }
         http.send();
     }
-
-    onCarLatChanged: { if (autoFollow) map.center = QtPositioning.coordinate(carLat, carLon) }
-    onCarLonChanged: { if (autoFollow) map.center = QtPositioning.coordinate(carLat, carLon) }
 
     function recenterMap() {
         autoFollow = true

@@ -42,3 +42,4 @@ void TelemetryData::setHeading(double v){
     m_heading = v;
     emit headingChanged();
 }
+

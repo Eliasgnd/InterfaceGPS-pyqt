@@ -18,6 +18,9 @@ private slots:
     void tick();
 
 private:
+    QList<QGeoCoordinate> m_routePoints;
+    int m_currentIndex = 0;
+
     TelemetryData* m_data = nullptr;
     QTimer m_timer;
 
