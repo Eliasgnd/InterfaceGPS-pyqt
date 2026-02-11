@@ -1,4 +1,5 @@
-QT += core gui widgets location positioning quickwidgets
+# Supprime les anciennes versions et mets exactement ceci :
+QT += core gui widgets positioning location quickwidgets qml quick
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
