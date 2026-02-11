@@ -1,6 +1,6 @@
-import QtQuick
-import QtLocation
-import QtPositioning
+import QtQuick 2.15
+import QtLocation 5.15
+import QtPositioning 5.15
 
 Item {
     id: root
@@ -12,52 +12,50 @@ Item {
     property double carHeading: 0
     property bool autoFollow: true
 
-    // Signaux vers le C++
     signal routeInfoUpdated(string distance, string duration)
-    // Communication via String (JSON) pour éviter les bugs de types
     signal suggestionsUpdated(string suggestions)
+
+    // --- LOGS DE DÉMARRAGE ---
+    Component.onCompleted: {
+        console.log("=== QML: Initialisation de la carte ===")
+        console.log("QML: Clé API présente : " + (mapboxApiKey.length > 0 ? "OUI (" + mapboxApiKey.substring(0,5) + "...)" : "NON"))
+        console.log("QML: Position de départ : " + carLat + ", " + carLon)
+
+        // Test de connexion immédiat vers Mapbox
+        testHttpConnexion()
+    }
+
+    function testHttpConnexion() {
+        var testUrl = "https://api.mapbox.com/geocoding/v5/mapbox.places/Paris.json?access_token=" + mapboxApiKey + "&limit=1"
+        console.log("QML: Lancement du test de connexion SSL/HTTPS vers Mapbox...")
+        var http = new XMLHttpRequest()
+        http.open("GET", testUrl, true)
+        http.onreadystatechange = function() {
+            if (http.readyState === 4) {
+                if (http.status === 200) {
+                    console.log(">>> [SUCCESS] Test réseau : Mapbox répond correctement (HTTP 200)")
+                } else {
+                    console.log(">>> [ERREUR] Test réseau : Code " + http.status)
+                    console.log(">>> Réponse serveur : " + http.responseText)
+                    if (http.status === 0) console.log(">>> CONSEIL: Un code 0 indique souvent un problème SSL (libssl manquante) ou un blocage Firewall.")
+                }
+            }
+        }
+        http.send()
+    }
 
     Plugin {
         id: mapPlugin
         name: "osm"
-
-        // 1. TUILES (Affichage Carte via Mapbox)
         PluginParameter {
             name: "osm.mapping.custom.host"
-            value: "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/512/%z/%x/%y@2x?access_token=" + mapboxApiKey
+            // On passe de 512 à 256 et on enlève le @2x
+            value: "https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/%z/%x/%y?access_token=" + mapboxApiKey
         }
         PluginParameter { name: "osm.mapping.providersrepository.disabled"; value: true }
-
-        // 2. CACHE AVANCÉ (Pour éviter de retélécharger)
-        // Stockage de 2 Go sur le disque (au lieu de 50 Mo par défaut)
-        PluginParameter { name: "osm.mapping.cache.disk.size"; value: "2000000000" }
-        // Durée de conservation : 1 an (525600 minutes) au lieu de 12h
-        PluginParameter { name: "osm.mapping.cache.directory.expire"; value: "525600" }
-
-        // 3. ROUTING (Itinéraire via serveur communautaire Allemand)
-        // Ce serveur est fiable, gratuit et ne demande pas d'authentification complexe
-        PluginParameter {
-            name: "osm.routing.host";
-            value: "https://routing.openstreetmap.de/routed-car/route/v1/driving/"
-        }
+        PluginParameter { name: "osm.routing.host"; value: "https://routing.openstreetmap.de/routed-car/route/v1/driving/" }
         PluginParameter { name: "osm.routing.apiversion"; value: "v5" }
         PluginParameter { name: "osm.useragent"; value: "InterfaceGPS_Student/1.0" }
-    }
-
-    // Modèle pour l'itinéraire (Route)
-    GeocodeModel {
-        id: geocodeModel
-        plugin: mapPlugin
-        limit: 1
-        onLocationsChanged: {
-            // Ce bloc est moins utilisé car on passe par searchDestination manuelle ci-dessous
-            if (status !== GeocodeModel.Ready || count <= 0) return
-            var loc = get(0).coordinate
-            routeQuery.clearWaypoints()
-            routeQuery.addWaypoint(QtPositioning.coordinate(carLat, carLon))
-            routeQuery.addWaypoint(loc)
-            routeModel.update()
-        }
     }
 
     RouteQuery { id: routeQuery }
@@ -69,24 +67,19 @@ Item {
         autoUpdate: false
 
         onStatusChanged: {
-            console.log("QML: RouteModel Status = " + status)
-
             if (status === RouteModel.Ready) {
-                console.log("QML: RouteModel PRÊT ! Itinéraires trouvés : " + count)
+                console.log("QML: [ROUTE] Succès ! Itinéraires trouvés : " + count)
                 if (count > 0) {
-                    var route = get(0);
-                    map.fitViewport(route.path);
-                    root.autoFollow = false;
-
-                    var d = (route.distance / 1000).toFixed(1) + " km";
-                    var t = Math.round(route.travelTime / 60) + " min";
-                    console.log("QML: Infos route : " + d + " en " + t)
-                    routeInfoUpdated(d, t);
+                    var route = get(0)
+                    var d = (route.distance / 1000).toFixed(1) + " km"
+                    var t = Math.round(route.travelTime / 60) + " min"
+                    console.log("QML: [ROUTE] Détails : " + d + " / " + t)
+                    routeInfoUpdated(d, t)
                 }
             } else if (status === RouteModel.Loading) {
-                console.log("QML: Calcul en cours...")
+                console.log("QML: [ROUTE] Calcul en cours sur le serveur...")
             } else if (status === RouteModel.Error) {
-                console.log("QML: ERREUR ROUTE : " + errorString)
+                console.log("!!! QML: [ROUTE] ERREUR : " + errorString)
             }
         }
     }
@@ -97,7 +90,6 @@ Item {
         plugin: mapPlugin
         center: QtPositioning.coordinate(carLat, carLon)
         zoomLevel: carZoom
-        tilt: autoFollow ? 45 : 0
         copyrightsVisible: false
 
         MapItemView {
@@ -110,7 +102,6 @@ Item {
             coordinate: QtPositioning.coordinate(carLat, carLon)
             anchorPoint.x: carVisual.width / 2
             anchorPoint.y: carVisual.height / 2
-            z: 10
             sourceItem: Item {
                 id: carVisual
                 width: 60; height: 60
@@ -124,75 +115,84 @@ Item {
         }
     }
 
-    // --- FONCTIONS APPELÉES PAR LE C++ ---
-
-    // 1. Recherche d'itinéraire (Bouton Aller)
+    // --- RECHERCHE AVEC LOGS DÉTAILLÉS ---
     function searchDestination(address) {
-        console.log("QML: Recherche destination vers : " + address)
-
-        // Etape 1 : On demande à Mapbox où se trouve l'adresse (Geocoding précis)
+        console.log("--- QML: [GEOCODING] Début de recherche pour : " + address + " ---")
         var http = new XMLHttpRequest()
         var url = "https://api.mapbox.com/geocoding/v5/mapbox.places/" + encodeURIComponent(address) + ".json?access_token=" + mapboxApiKey + "&limit=1"
 
-        http.open("GET", url, true);
-        http.onreadystatechange = function() {
-            if (http.readyState == 4 && http.status == 200) {
-                try {
-                    var json = JSON.parse(http.responseText)
-                    if (json.features && json.features.length > 0) {
-                        var destLon = json.features[0].center[0]
-                        var destLat = json.features[0].center[1]
-                        console.log("QML: Coordonnées trouvées : " + destLat + ", " + destLon)
+        console.log("QML: [GEOCODING] URL appelée : " + url)
 
-                        // Etape 2 : On lance le calcul de route (OSRM Allemand)
-                        routeQuery.clearWaypoints()
-                        routeQuery.addWaypoint(QtPositioning.coordinate(carLat, carLon)) // Départ
-                        routeQuery.addWaypoint(QtPositioning.coordinate(destLat, destLon)) // Arrivée
-                        routeModel.update()
-                    } else {
-                        console.log("QML: Adresse introuvable.")
+        http.open("GET", url, true)
+        http.onreadystatechange = function() {
+            console.log("QML: [GEOCODING] Changement d'état HTTP : " + http.readyState)
+            if (http.readyState == 4) {
+                console.log("QML: [GEOCODING] Réponse reçue. Status HTTP : " + http.status)
+
+                if (http.status == 200) {
+                    try {
+                        var json = JSON.parse(http.responseText)
+                        if (json.features && json.features.length > 0) {
+                            var destLon = json.features[0].center[0]
+                            var destLat = json.features[0].center[1]
+                            console.log("QML: [GEOCODING] Coordonnées trouvées : " + destLat + ", " + destLon)
+
+                            routeQuery.clearWaypoints()
+                            routeQuery.addWaypoint(QtPositioning.coordinate(carLat, carLon))
+                            routeQuery.addWaypoint(QtPositioning.coordinate(destLat, destLon))
+                            console.log("QML: [GEOCODING] Lancement de la requête de route...")
+                            routeModel.update()
+                        } else {
+                            console.log("QML: [GEOCODING] Aucun résultat pour cette adresse.")
+                        }
+                    } catch (e) {
+                        console.log("!!! QML: [GEOCODING] Erreur lors du parsing JSON : " + e)
                     }
-                } catch (e) {
-                    console.log("QML: Erreur JSON : " + e)
+                } else {
+                    console.log("!!! QML: [GEOCODING] Erreur HTTP : " + http.status + " / " + http.responseText)
                 }
             }
         }
-        http.send();
+        http.send()
     }
 
-    // 2. Suggestions de recherche (Quand on tape)
+    // --- SUGGESTIONS AVEC LOGS DÉTAILLÉS ---
     function requestSuggestions(query) {
-        if (!query || query.length < 3) {
-            root.suggestionsUpdated("[]")
-            return
-        }
-
-        // On interroge Mapbox Geocoding avec Fuzzy Match
+        console.log("QML: [SUGGESTIONS] Requête pour : " + query)
         var http = new XMLHttpRequest()
         var url = "https://api.mapbox.com/geocoding/v5/mapbox.places/" + encodeURIComponent(query) + ".json?access_token=" + mapboxApiKey + "&autocomplete=true&fuzzyMatch=true&language=fr&limit=5"
 
-        http.open("GET", url, true);
+        http.open("GET", url, true)
         http.onreadystatechange = function() {
-            if (http.readyState == 4 && http.status == 200) {
-                try {
-                    var json = JSON.parse(http.responseText)
-                    var results = []
-                    if (json.features) {
-                        for (var i = 0; i < json.features.length; i++) {
-                            results.push(json.features[i].place_name)
+            if (http.readyState == 4) {
+                if (http.status == 200) {
+                    try {
+                        var json = JSON.parse(http.responseText)
+                        var results = []
+                        if (json.features) {
+                            for (var i = 0; i < json.features.length; i++) {
+                                results.push(json.features[i].place_name)
+                            }
                         }
+                        console.log("QML: [SUGGESTIONS] " + results.length + " résultats envoyés au C++")
+                        root.suggestionsUpdated(JSON.stringify(results))
+                    } catch (e) {
+                        console.log("!!! QML: [SUGGESTIONS] Erreur JSON : " + e)
                     }
-                    // Envoi au C++ sous forme de String JSON
-                    root.suggestionsUpdated(JSON.stringify(results))
-                } catch (e) {
-                    console.log("QML: Erreur parsing suggestions")
+                } else {
+                    console.log("!!! QML: [SUGGESTIONS] Erreur HTTP " + http.status)
                 }
             }
         }
-        http.send();
+        http.send()
     }
 
     onCarLatChanged: { if (autoFollow) map.center = QtPositioning.coordinate(carLat, carLon) }
     onCarLonChanged: { if (autoFollow) map.center = QtPositioning.coordinate(carLat, carLon) }
-    function recenterMap() { autoFollow = true; map.center = QtPositioning.coordinate(carLat, carLon); map.zoomLevel = 17; }
+    function recenterMap() {
+        console.log("QML: Recentrage manuel demandé")
+        autoFollow = true;
+        map.center = QtPositioning.coordinate(carLat, carLon);
+        map.zoomLevel = 17;
+    }
 }
