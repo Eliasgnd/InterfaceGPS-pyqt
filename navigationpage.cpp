@@ -42,19 +42,22 @@ NavigationPage::NavigationPage(QWidget* parent)
     // --- 2. CONFIGURATION CARTE QML ---
     m_mapView = new QQuickWidget(this);
 
-    // --- MODIFICATION : UTILISATION DE LA VARIABLE D'ENVIRONNEMENT ---
-    // On récupère la variable, on la convertit et on nettoie les espaces éventuels
-    QString apiKey = QString::fromLocal8Bit(qgetenv("MAPBOX_KEY")).trimmed();
+    // --- MODIFICATION : LECTURE DES VARIABLES D'ENVIRONNEMENT ---
+    // On lit MAPBOX_API_KEY et HERE_API_KEY définies dans Qt Creator (Projets > Run)
+    QString mapboxKey = QString::fromLocal8Bit(qgetenv("MAPBOX_API_KEY")).trimmed();
+    QString hereKey = QString::fromLocal8Bit(qgetenv("HERE_API_KEY")).trimmed();
 
-    // Vérification de sécurité
-    if (apiKey.isEmpty()) {
-        qWarning() << "!!! ERREUR : La variable d'environnement MAPBOX_KEY est vide ou introuvable !!!";
-        qWarning() << "Veuillez la configurer dans Qt Creator (Projets > Run > Environment) avec votre NOUVELLE clé.";
-    } else {
-        qDebug() << "OK : Clé API chargée depuis MAPBOX_KEY (" << apiKey.left(10) << "...)";
-    }
+    // Logs pour vérifier (affichera les 10 premiers caractères)
+    if (mapboxKey.isEmpty()) qWarning() << "⚠️ MAPBOX_API_KEY est vide !";
+    else qDebug() << "✅ Mapbox Key chargée :" << mapboxKey.left(10) << "...";
 
-    m_mapView->rootContext()->setContextProperty("mapboxApiKey", apiKey);
+    if (hereKey.isEmpty()) qWarning() << "⚠️ HERE_API_KEY est vide !";
+    else qDebug() << "✅ HERE Key chargée :" << hereKey.left(10) << "...";
+
+    // INJECTION DANS QML : On rend ces variables accessibles sous ces noms exacts
+    m_mapView->rootContext()->setContextProperty("mapboxApiKey", mapboxKey);
+    m_mapView->rootContext()->setContextProperty("hereApiKey", hereKey);
+
     m_mapView->setResizeMode(QQuickWidget::SizeRootObjectToView);
 
     // Connexion des signaux
