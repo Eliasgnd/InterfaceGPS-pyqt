@@ -7,9 +7,6 @@ Item {
     id: root
     width: 600; height: 400
 
-    // --- CONFIGURATION ---
-    // Les variables 'mapboxApiKey' et 'hereApiKey' sont injectées par NavigationPage.cpp
-
     // --- PROPRIÉTÉS ---
     property double carLat: 48.2715
     property double carLon: 4.0645
@@ -23,9 +20,10 @@ Item {
     property string distanceToNextTurn: ""
     property int nextManeuverDirection: 0
 
-    // VARIABLES INTERNES TRAJET
+    // GUIDAGE AVANCÉ
     property var routeSteps: []
     property int currentStepIndex: 0
+    property double lastDistToStep: 999999
 
     // STATISTIQUES
     property string remainingDistString: "-- km"
@@ -46,7 +44,7 @@ Item {
     signal routeInfoUpdated(string distance, string duration)
     signal suggestionsUpdated(string suggestions)
 
-    // --- CARTE (Affichage Mapbox) ---
+    // --- PLUGIN CARTE (MAPBOX via OSM) ---
     Plugin {
         id: mapPlugin
         name: "osm"
@@ -110,7 +108,6 @@ Item {
 
     // --- CALCUL D'ITINÉRAIRE (API Mapbox Traffic) ---
     function requestRouteWithTraffic(startCoord, endCoord) {
-        // Optimisation : On ne lance pas de requête si les points sont quasi identiques (optionnel mais prudent)
         var url = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic/" +
                   startCoord.longitude + "," + startCoord.latitude + ";" +
                   endCoord.longitude + "," + endCoord.latitude +
@@ -126,52 +123,49 @@ Item {
                         if (json.routes && json.routes.length > 0) {
                             var route = json.routes[0];
 
-                            // 1. Stats et Temps
                             var durationSec = route.duration;
                             var distMeters = route.distance;
 
                             if (durationSec > 0) realRouteSpeed = distMeters / durationSec;
                             else realRouteSpeed = 13.8;
 
-                            var distKm = (distMeters / 1000).toFixed(1) + " km";
-                            var timeMin = Math.round(durationSec / 60) + " min";
-
-                            routeInfoUpdated(distKm, timeMin);
+                            routeInfoUpdated((distMeters / 1000).toFixed(1) + " km", Math.round(durationSec / 60) + " min");
                             updateStatsFromDuration(durationSec, distMeters);
 
-                            // 2. Tracé (Points GPS)
                             var coords = route.geometry.coordinates;
                             var newPoints = [];
                             for (var i = 0; i < coords.length; i++) {
                                 newPoints.push(QtPositioning.coordinate(coords[i][1], coords[i][0]));
                             }
                             routePoints = newPoints;
-
-                            // Affichage immédiat
                             visualRouteLine.path = routePoints;
 
-                            // 3. Instructions de guidage
                             if (route.legs && route.legs.length > 0) {
                                 routeSteps = route.legs[0].steps;
                                 currentStepIndex = 0;
-                                updateGuidance(); // Lance le guidage
+                                lastDistToStep = 999999;
+                                updateGuidance();
                             }
-
                             isRecalculating = false;
                         }
-                    } catch(e) { console.log("Erreur JSON Traffic: " + e) }
-                } else {
-                    console.log("Erreur API: " + http.status + " " + http.responseText);
+                    } catch(e) { console.log("Erreur JSON: " + e) }
                 }
             }
         }
         http.send();
     }
 
-    // --- SYSTÈME DE GUIDAGE ---
+    // --- LOGIQUE WAZE (ARRONDIS ET PASSAGE DE VIRAGE) ---
+    function formatWazeDistance(meters) {
+        if (meters < 20) return "0 m";
+        if (meters < 300) return (Math.round(meters / 10) * 10) + " m";
+        if (meters < 1000) return (Math.round(meters / 50) * 50) + " m";
+        return (Math.round(meters / 100) / 10).toFixed(1) + " km";
+    }
+
     function updateGuidance() {
         if (!routeSteps || routeSteps.length === 0 || currentStepIndex >= routeSteps.length) {
-            if (routePoints.length > 0 && routePoints.length < 5) {
+            if (routePoints.length > 0 && routePoints.length < 15) {
                  nextInstruction = "Vous êtes arrivé";
                  distanceToNextTurn = "0 m";
                  nextManeuverDirection = 0;
@@ -182,20 +176,17 @@ Item {
         var step = routeSteps[currentStepIndex];
         var maneuverLoc = QtPositioning.coordinate(step.maneuver.location[1], step.maneuver.location[0]);
         var carPos = QtPositioning.coordinate(carLat, carLon);
-
         var dist = carPos.distanceTo(maneuverLoc);
 
-        // Si on a passé l'instruction, on passe à la suivante
-        if (dist < 30 && currentStepIndex < routeSteps.length - 1) {
+        if (dist < 35 && dist > lastDistToStep && currentStepIndex < routeSteps.length - 1) {
             currentStepIndex++;
+            lastDistToStep = 999999;
             updateGuidance();
             return;
         }
+        lastDistToStep = dist;
 
-        if (dist >= 1000) distanceToNextTurn = (dist / 1000).toFixed(1) + " km";
-        else if (dist >= 500) distanceToNextTurn = (Math.round(dist / 100) * 100) + " m";
-        else distanceToNextTurn = Math.round(dist) + " m";
-
+        distanceToNextTurn = formatWazeDistance(dist);
         nextInstruction = step.maneuver.instruction;
         nextManeuverDirection = mapboxModifierToDirection(step.maneuver.type, step.maneuver.modifier);
     }
@@ -204,20 +195,72 @@ Item {
         if (type === "arrive") return 0;
         if (type === "roundabout" || type === "rotary") return 100;
         if (!modifier) return 1;
-
         if (modifier.indexOf("slight right") !== -1) return 3;
         if (modifier.indexOf("sharp right") !== -1) return 5;
         if (modifier.indexOf("right") !== -1) return 4;
-
         if (modifier.indexOf("slight left") !== -1) return 10;
         if (modifier.indexOf("sharp left") !== -1) return 8;
         if (modifier.indexOf("left") !== -1) return 9;
-
         if (modifier.indexOf("uturn") !== -1) return 6;
         return 1;
     }
 
-    // --- RECHERCHE ET RECALCUL ---
+    function updateTripStats() {
+        if (routePoints.length === 0) return;
+        var carPos = QtPositioning.coordinate(carLat, carLon);
+        var distRemaining = 0;
+        distRemaining += carPos.distanceTo(routePoints[0]);
+        for (var i = 0; i < routePoints.length - 1; i++) {
+            distRemaining += routePoints[i].distanceTo(routePoints[i+1]);
+        }
+        remainingDistString = formatWazeDistance(distRemaining);
+        var timeSeconds = distRemaining / realRouteSpeed;
+        updateStatsFromDuration(timeSeconds, distRemaining);
+    }
+
+    function updateStatsFromDuration(durationSec, distMeters) {
+        var h = Math.floor(durationSec / 3600);
+        var m = Math.floor((durationSec % 3600) / 60);
+        if (h > 0) remainingTimeString = h + " h " + (m < 10 ? "0"+m : m);
+        else remainingTimeString = m + " min";
+        var arrivalDate = new Date(Date.now() + durationSec * 1000);
+        var ah = arrivalDate.getHours();
+        var am = arrivalDate.getMinutes();
+        arrivalTimeString = ah + ":" + (am < 10 ? "0"+am : am);
+    }
+
+    function updateRouteVisuals() {
+        if (routePoints.length === 0) { visualRouteLine.path = []; return; }
+        var carPos = QtPositioning.coordinate(carLat, carLon);
+        var searchLimit = Math.min(routePoints.length, 50);
+        var closestIndex = -1; var minDistance = 100000;
+        for (var i = 0; i < searchLimit; i++) {
+            var d = carPos.distanceTo(routePoints[i]);
+            if (d < minDistance) { minDistance = d; closestIndex = i; }
+        }
+        if (closestIndex > 0) routePoints.splice(0, closestIndex);
+        if (routePoints.length > 0 && carPos.distanceTo(routePoints[0]) < 12) routePoints.splice(0, 1);
+        if (routePoints.length > 0) {
+            var drawPath = [carPos];
+            var limit = Math.min(routePoints.length, 3000);
+            for (var k = 0; k < limit; k++) drawPath.push(routePoints[k]);
+            visualRouteLine.path = drawPath;
+        } else { visualRouteLine.path = []; }
+    }
+
+    function checkIfOffRoute() {
+        if (routePoints.length === 0 || isRecalculating) return;
+        var carPos = QtPositioning.coordinate(carLat, carLon);
+        var minDistance = 100000;
+        var searchLimit = Math.min(routePoints.length, 100);
+        for (var i = 0; i < searchLimit; i++) {
+            var d = carPos.distanceTo(routePoints[i]);
+            if (d < minDistance) minDistance = d;
+        }
+        if (minDistance > 100) recalculateRoute();
+    }
+
+    // --- RECHERCHE ET SUGGESTIONS (CORRIGÉES) ---
     function searchDestination(address) {
         var queryUrl = "https://api.mapbox.com/geocoding/v5/mapbox.places/" + encodeURIComponent(address) + ".json?access_token=" + mapboxApiKey + "&limit=1&language=fr";
         var http = new XMLHttpRequest();
@@ -241,94 +284,40 @@ Item {
         http.send();
     }
 
+    function requestSuggestions(query) {
+        if (!query || query.length < 3) return;
+        var http = new XMLHttpRequest();
+        var url = "https://api.mapbox.com/geocoding/v5/mapbox.places/" + encodeURIComponent(query) + ".json?access_token=" + mapboxApiKey + "&autocomplete=true&limit=5&language=fr";
+
+        // CORRECTION ICI : On ajoute le .open() manquant
+        http.open("GET", url, true);
+
+        http.onreadystatechange = function() {
+            if (http.readyState == 4 && http.status == 200) {
+                try {
+                    var json = JSON.parse(http.responseText);
+                    var results = [];
+                    if (json.features) for (var i=0; i<json.features.length; i++) results.push(json.features[i].place_name);
+                    root.suggestionsUpdated(JSON.stringify(results));
+                } catch(e) {}
+            }
+        }
+        http.send();
+    }
+
     function recalculateRoute() {
         if (!finalDestination || isRecalculating) return;
         isRecalculating = true;
-        console.log("Recalcul auto (Hors piste détecté)..."); // Log pour vérifier qu'on ne spam pas
         requestRouteWithTraffic(QtPositioning.coordinate(carLat, carLon), finalDestination);
     }
 
-    // --- FONCTIONS INTERNES (Affichage, Scan, Vitesse) ---
-    function updateStatsFromDuration(durationSec, distMeters) {
-        if (distMeters > 1000) remainingDistString = (distMeters / 1000).toFixed(1) + " km";
-        else remainingDistString = Math.round(distMeters) + " m";
-        var h = Math.floor(durationSec / 3600);
-        var m = Math.floor((durationSec % 3600) / 60);
-        if (h > 0) remainingTimeString = h + " h " + (m < 10 ? "0"+m : m);
-        else remainingTimeString = m + " min";
-        var arrivalDate = new Date(Date.now() + durationSec * 1000);
-        var ah = arrivalDate.getHours(); var am = arrivalDate.getMinutes();
-        if (am < 10) am = "0" + am;
-        arrivalTimeString = ah + ":" + am;
+    function recenterMap() {
+        autoFollow = true;
+        map.center = QtPositioning.coordinate(carLat, carLon);
+        carZoom = 17;
     }
 
-    function updateTripStats() {
-        if (routePoints.length === 0) return;
-        var carPos = QtPositioning.coordinate(carLat, carLon);
-        var distRemaining = carPos.distanceTo(routePoints[0]);
-        var step = (routePoints.length > 2000) ? 20 : 5;
-        for (var i = 0; i < routePoints.length - step; i += step) {
-            distRemaining += routePoints[i].distanceTo(routePoints[i+step]);
-        }
-        var timeSeconds = distRemaining / realRouteSpeed;
-        updateStatsFromDuration(timeSeconds, distRemaining);
-    }
-
-    function updateRouteVisuals() {
-        if (routePoints.length === 0) { visualRouteLine.path = []; return; }
-        var carPos = QtPositioning.coordinate(carLat, carLon);
-        // OPTIMISATION : Scanner élargi (50 points) pour ne pas perdre la trace avec "full" geometry
-        var searchLimit = Math.min(routePoints.length, 50);
-        var closestIndex = -1; var minDistance = 100000;
-        for (var i = 0; i < searchLimit; i++) {
-            var d = carPos.distanceTo(routePoints[i]);
-            if (d < minDistance) { minDistance = d; closestIndex = i; }
-        }
-        if (closestIndex > 0) routePoints.splice(0, closestIndex);
-        if (routePoints.length > 0 && carPos.distanceTo(routePoints[0]) < 10) routePoints.splice(0, 1);
-        if (routePoints.length > 0) {
-            var drawPath = [carPos];
-            var limit = Math.min(routePoints.length, 3000);
-            for (var k = 0; k < limit; k++) drawPath.push(routePoints[k]);
-            visualRouteLine.path = drawPath;
-        } else { visualRouteLine.path = []; }
-    }
-
-    function checkIfOffRoute() {
-        if (routePoints.length === 0 || isRecalculating) return;
-        var carPos = QtPositioning.coordinate(carLat, carLon);
-        var minDistance = 100000;
-
-        // OPTIMISATION : On scanne 100 points pour être sûr
-        // Si le point le plus proche parmi les 100 est à plus de 100m, on est vraiment perdu
-        var searchLimit = Math.min(routePoints.length, 100);
-
-        for (var i = 0; i < searchLimit; i++) {
-            var d = carPos.distanceTo(routePoints[i]);
-            if (d < minDistance) minDistance = d;
-        }
-
-        // OPTIMISATION : Seuil augmenté à 100m pour éviter les recalculs intempestifs (GPS jitter)
-        if (minDistance > 100) recalculateRoute();
-    }
-
-    function getDirectionIconPath(direction) {
-        var path = "qrc:/icons/";
-        if (direction === 0) return path + "dir_arrival.svg";
-        switch(direction) {
-            case 1: return path + "dir_straight.svg";
-            case 3: return path + "dir_slight_right.svg";
-            case 4: return path + "dir_right.svg";
-            case 5: return path + "dir_right.svg";
-            case 6: return path + "dir_uturn.svg";
-            case 8: return path + "dir_left.svg";
-            case 9: return path + "dir_left.svg";
-            case 10: return path + "dir_slight_left.svg";
-            case 100: return path + "rond_point.svg";
-            default: return path + "dir_straight.svg";
-        }
-    }
-
+    // --- LIMITES DE VITESSE ---
     function updateRealSpeedLimit(lat, lon) {
         var http = new XMLHttpRequest();
         var query = '[out:json][timeout:25];(way(around:80,' + lat + ',' + lon + ')["highway"]["maxspeed"];);out tags center;';
@@ -371,28 +360,21 @@ Item {
         return 0;
     }
 
-    function requestSuggestions(query) {
-        if (!query || query.length < 3) return;
-        var http = new XMLHttpRequest();
-        var url = "https://api.mapbox.com/geocoding/v5/mapbox.places/" + encodeURIComponent(query) + ".json?access_token=" + mapboxApiKey + "&autocomplete=true&limit=5&language=fr";
-        http.open("GET", url, true);
-        http.onreadystatechange = function() {
-            if (http.readyState == 4 && http.status == 200) {
-                try {
-                    var json = JSON.parse(http.responseText);
-                    var results = [];
-                    if (json.features) for (var i=0; i<json.features.length; i++) results.push(json.features[i].place_name);
-                    root.suggestionsUpdated(JSON.stringify(results));
-                } catch(e) {}
-            }
+    function getDirectionIconPath(direction) {
+        var path = "qrc:/icons/";
+        if (direction === 0) return path + "dir_arrival.svg";
+        switch(direction) {
+            case 1: return path + "dir_straight.svg";
+            case 3: return path + "dir_slight_right.svg";
+            case 4: return path + "dir_right.svg";
+            case 5: return path + "dir_right.svg";
+            case 6: return path + "dir_uturn.svg";
+            case 8: return path + "dir_left.svg";
+            case 9: return path + "dir_left.svg";
+            case 10: return path + "dir_slight_left.svg";
+            case 100: return path + "rond_point.svg";
+            default: return path + "dir_straight.svg";
         }
-        http.send();
-    }
-
-    function recenterMap() {
-        autoFollow = true;
-        map.center = QtPositioning.coordinate(carLat, carLon);
-        carZoom = 17;
     }
 
     // --- UI ELEMENTS ---
@@ -448,8 +430,6 @@ Item {
                 NumberAnimation { from: 0.8; to: 0.2; duration: 500 }
             }
         }
-
-        // --- SYNTAXE CORRIGÉE ---
         Text {
             anchors.centerIn: parent
             text: speedLimit < 0 ? "-" : speedLimit
@@ -470,8 +450,6 @@ Item {
         var now = Date.now();
         var currentPos = QtPositioning.coordinate(carLat, carLon);
         var distanceSinceLast = lastApiCallPos.distanceTo(currentPos);
-
-        // OPTIMISATION : On ne requête les limitations que toutes les 30 sec (au lieu de 15)
         if ( (now - lastApiCallTime > 30000) && (distanceSinceLast > 50) ) {
             updateRealSpeedLimit(carLat, carLon);
             lastApiCallTime = now;
