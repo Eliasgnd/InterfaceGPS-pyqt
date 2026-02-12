@@ -16,26 +16,13 @@ Item {
     property string nextInstruction: ""
     property int speedLimit: -1
     property double manualBearing: 0
-    
-    // POI marker colors
-    readonly property string poiColorParking: "#3498db"
-    readonly property string poiColorGas: "#f39c12"
-    readonly property string poiColorDefault: "#95a5a6"
-    readonly property int poiResultLimit: 10
 
-    // --- VARIABLES POUR L'OPTIMISATION API ---
-    // On stocke le moment (timestamp) et la position du dernier appel
+    // Optimisation API Vitesse
     property double lastApiCallTime: 0
     property var lastApiCallPos: QtPositioning.coordinate(0, 0)
 
     signal routeInfoUpdated(string distance, string duration)
     signal suggestionsUpdated(string suggestions)
-
-    // POI Model for storing points of interest
-    ListModel {
-        id: poiModel
-        // Each entry: { lat: double, lon: double, name: string, category: string }
-    }
 
     Plugin {
         id: mapPlugin
@@ -67,107 +54,58 @@ Item {
         }
     }
 
+    // Gestion limitation vitesse (Overpass)
     function parseMaxspeedValue(raw) {
         if (!raw) return 0
-
-        // Exemples possibles dans OSM: "50", "50 km/h", "30 mph", "FR:urban", "signals", etc. :contentReference[oaicite:2]{index=2}
         raw = ("" + raw).trim()
-
-        // Cas "FR:urban" etc (très simplifié)
-        // (Si tu veux, on pourra affiner par pays / contexte plus tard)
         if (raw.indexOf("FR:urban") === 0) return 50
         if (raw.indexOf("FR:rural") === 0) return 80
         if (raw.indexOf("FR:motorway") === 0) return 130
-
-        // Extraction du 1er nombre
         var m = raw.match(/(\d+(\.\d+)?)/)
         if (!m) return 0
         var v = parseFloat(m[1])
         if (isNaN(v)) return 0
-
-        // Conversion mph -> km/h si nécessaire
-        if (raw.toLowerCase().indexOf("mph") !== -1) {
-            v = v * 1.60934
-        }
-
+        if (raw.toLowerCase().indexOf("mph") !== -1) v = v * 1.60934
         return Math.round(v)
     }
 
     function updateRealSpeedLimit(lat, lon) {
         var http = new XMLHttpRequest()
-
-        // Query Overpass QL : routes autour du point qui ont maxspeed :contentReference[oaicite:3]{index=3}
-        var radius = 80 // mètres (ajuste 50-120 selon ta précision GPS)
-        var query =
-            '[out:json][timeout:10];' +
-            '(' +
-            '  way(around:' + radius + ',' + lat + ',' + lon + ')["highway"]["maxspeed"];' +
-            ');' +
-            'out tags center;'
-
-        // Overpass interpreter endpoint :contentReference[oaicite:4]{index=4}
+        var radius = 80
+        var query = '[out:json][timeout:25];(way(around:' + radius + ',' + lat + ',' + lon + ')["highway"]["maxspeed"];);out tags center;'
         var url = "https://overpass-api.de/api/interpreter"
 
-        console.log(">>> Overpass speedlimit POST to:", url)
-        // IMPORTANT: on envoie la requête en POST (plus fiable que GET pour l’encodage)
         http.open("POST", url, true)
         http.setRequestHeader("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-
         http.onreadystatechange = function() {
             if (http.readyState !== 4) return
-
-            if (http.status !== 200) {
-                console.log("!!! Overpass error:", http.status, http.responseText)
-                // Fallback: ne change pas brutalement, ou mets une valeur par défaut
-                // root.speedLimit = 0
-                return
-            }
-
+            if (http.status !== 200) return
             try {
                 var json = JSON.parse(http.responseText)
-                if (!json.elements || json.elements.length === 0) {
-                    console.log("Overpass: aucun maxspeed trouvé dans le rayon")
-                    return
-                }
-
+                if (!json.elements) return
                 var bestLimit = 0
                 var bestDist = 1e18
                 var carPos = QtPositioning.coordinate(lat, lon)
 
                 for (var i = 0; i < json.elements.length; i++) {
                     var el = json.elements[i]
-                    if (!el.tags || !el.tags.maxspeed) continue
-                    if (!el.center) continue // on a demandé out center;
-
+                    if (!el.tags || !el.tags.maxspeed || !el.center) continue
                     var limit = parseMaxspeedValue(el.tags.maxspeed)
                     if (limit <= 0) continue
-
                     var p = QtPositioning.coordinate(el.center.lat, el.center.lon)
                     var d = carPos.distanceTo(p)
-
                     if (d < bestDist) {
                         bestDist = d
                         bestLimit = limit
                     }
                 }
-
-                if (bestLimit > 0) {
-                    root.speedLimit = bestLimit
-                    // console.log("Overpass: speedLimit =", bestLimit, "dist(m)=", Math.round(bestDist))
-                } else {
-                    console.log("Overpass: trouvé des ways mais pas de maxspeed exploitable")
-                }
-
-            } catch(e) {
-                console.log("Erreur parsing Overpass JSON:", e)
-            }
+                if (bestLimit > 0) root.speedLimit = bestLimit
+            } catch(e) {}
         }
-
-        // body = data=<query>
         http.send("data=" + encodeURIComponent(query))
     }
 
-    // Bandeau d'instructions
+    // UI Carte
     Rectangle {
         id: instructionBanner
         anchors { top: parent.top; horizontalCenter: parent.horizontalCenter; topMargin: 12 }
@@ -188,137 +126,40 @@ Item {
         anchors.fill: parent
         plugin: mapPlugin
         center: QtPositioning.coordinate(carLat, carLon)
-
         zoomLevel: carZoom
         copyrightsVisible: false
         bearing: autoFollow ? carHeading : manualBearing
         tilt: autoFollow ? 45 : 0
 
-        // Animations
         Behavior on center {
             enabled: !root.autoFollow && !mapDragHandler.active
-
-            CoordinateAnimation {
-                duration: 250
-                easing.type: Easing.InOutQuad
-            }
+            CoordinateAnimation { duration: 250; easing.type: Easing.InOutQuad }
         }
-
         Behavior on zoomLevel { NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
         Behavior on bearing { NumberAnimation { duration: 600 } }
         Behavior on tilt { NumberAnimation { duration: 600 } }
 
-        // Interactions
         DragHandler {
             id: mapDragHandler
             target: null
-            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchScreen | PointerDevice.TouchPad
-
-            property point lastPos: Qt.point(0, 0)
-
-            onActiveChanged: {
-                if (active) {
-                    lastPos = centroid.position
-                }
-            }
-
             onCentroidChanged: {
                 if (!active) return
-
-                var p = centroid.position
-                var dx = p.x - lastPos.x
-                var dy = p.y - lastPos.y
-                lastPos = p
-
-                // Si on a VRAIMENT bougé un peu, alors seulement on désactive le follow
-                if (root.autoFollow && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
-                    root.autoFollow = false
-                }
-
-                // Pan de la carte (sens inverse pour “attraper” la map)
-                map.pan(-dx, -dy)
+                if (root.autoFollow) root.autoFollow = false
+                map.pan(-(centroid.position.x - mapDragHandler.centroid.pressedPosition.x),
+                        -(centroid.position.y - mapDragHandler.centroid.pressedPosition.y))
             }
         }
 
         WheelHandler {
-            acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
             onWheel: (event) => {
                 var step = event.angleDelta.y > 0 ? 1 : -1
                 root.carZoom = Math.max(2, Math.min(20, root.carZoom + step))
-                event.accepted = true
-            }
-        }
-
-
-        PinchHandler {
-            onActiveChanged: {
-                if (!active && root.autoFollow) {
-                    map.center = QtPositioning.coordinate(root.carLat, root.carLon)
-                }
             }
         }
 
         MapItemView {
             model: routeModel
             delegate: MapRoute { route: routeData; line.color: "#1db7ff"; line.width: 10; opacity: 0.8; smooth: true }
-        }
-
-        // POI Markers
-        MapItemView {
-            model: poiModel
-            delegate: MapQuickItem {
-                coordinate: QtPositioning.coordinate(model.lat, model.lon)
-                anchorPoint.x: poiVisual.width / 2
-                anchorPoint.y: poiVisual.height / 2
-                
-                sourceItem: Item {
-                    id: poiVisual
-                    width: 40
-                    height: 40
-                    
-                    // Colored circle based on category
-                    Rectangle {
-                        anchors.centerIn: parent
-                        width: 32
-                        height: 32
-                        radius: 16
-                        color: model.category === "parking" ? root.poiColorParking : 
-                               model.category === "gas_station" ? root.poiColorGas : root.poiColorDefault
-                        border.color: "white"
-                        border.width: 2
-                        
-                        // Icon/Letter in the center
-                        Text {
-                            anchors.centerIn: parent
-                            text: model.category === "parking" ? "P" : 
-                                  model.category === "gas_station" ? "⛽" : "•"
-                            color: "white"
-                            font.pixelSize: model.category === "gas_station" ? 18 : 16
-                            font.bold: true
-                        }
-                    }
-                    
-                    // POI Name tooltip (optional, shown below marker)
-                    Rectangle {
-                        anchors.top: parent.bottom
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.topMargin: 2
-                        width: nameText.width + 8
-                        height: 20
-                        radius: 4
-                        color: "#dd000000"
-                        visible: model.name && model.name.length > 0
-                        
-                        Text {
-                            id: nameText
-                            anchors.centerIn: parent
-                            text: model.name || ""
-                            color: "white"
-                            font.pixelSize: 10
-                        }
-                    }
-                }
-            }
         }
 
         MapQuickItem {
@@ -333,13 +174,12 @@ Item {
                 Rectangle {
                     anchors.centerIn: parent; width: 24; height: 32; color: "white"; radius: 6; border.width: 2; border.color: "#171a21"
                     Rectangle { width: 24; height: 24; color: "white"; rotation: 45; y: -10; anchors.horizontalCenter: parent.horizontalCenter; border.width: 2; border.color: "#171a21" }
-                    Rectangle { width: 26; height: 16; y: 20; x: -1; color: "white" }
                 }
             }
         }
     }
 
-    // Panneau de limitation
+    // Panneau Limitation
     Rectangle {
         id: speedSign
         width: 60; height: 60; radius: 30
@@ -363,48 +203,20 @@ Item {
         }
     }
 
-    // --- C'EST ICI QUE LA MAGIE OPÈRE ---
+    // Logique
     onCarLatChanged: {
         if (autoFollow) map.center = QtPositioning.coordinate(carLat, carLon)
-
-        // 1. On récupère le temps actuel
         var now = Date.now()
-
-        // 2. On calcule la distance parcourue depuis la dernière requête
         var currentPos = QtPositioning.coordinate(carLat, carLon)
         var distanceSinceLast = lastApiCallPos.distanceTo(currentPos)
-
-        // 3. LA CONDITION DOUBLE :
         if ( (now - lastApiCallTime > 15000) && (distanceSinceLast > 50) ) {
-
-            console.log("Mise à jour API Limite Vitesse")
             updateRealSpeedLimit(carLat, carLon)
-
-            // On enregistre les nouvelles références
             lastApiCallTime = now
             lastApiCallPos = currentPos
         }
     }
-
     onCarLonChanged: { if (autoFollow) map.center = QtPositioning.coordinate(carLat, carLon) }
-
-    onAutoFollowChanged: {
-        if (!autoFollow) {
-            // on “fige” l'orientation actuelle au moment où on quitte le suivi
-            manualBearing = map.bearing
-        } else {
-            // quand on revient en suivi, optionnel : aligner la carte sur la voiture
-            // (le binding bearing s’en charge déjà)
-        }
-    }
-
-    onCarZoomChanged: {
-        if (autoFollow) {
-            map.center = QtPositioning.coordinate(carLat, carLon)
-        }
-    }
-
-
+    onCarZoomChanged: { if (autoFollow) map.center = QtPositioning.coordinate(carLat, carLon) }
 
     function searchDestination(address) {
         var http = new XMLHttpRequest()
@@ -421,11 +233,7 @@ Item {
                         routeQuery.addWaypoint(QtPositioning.coordinate(c[1], c[0]))
                         routeModel.update()
                         autoFollow = true
-
-                        // Quand on change de destination, on force une mise à jour immédiate
                         updateRealSpeedLimit(carLat, carLon)
-                        lastApiCallTime = Date.now()
-                        lastApiCallPos = QtPositioning.coordinate(carLat, carLon)
                     }
                 } catch(e) {}
             }
@@ -455,84 +263,5 @@ Item {
         autoFollow = true
         map.center = QtPositioning.coordinate(carLat, carLon)
         carZoom = 17
-    }
-
-    // Search for Points of Interest using Mapbox Geocoding API
-    function searchPOI(category) {
-        console.log("Searching POI for category:", category)
-        
-        // Validate coordinates before making API call
-        if (isNaN(carLat) || isNaN(carLon) || (carLat === 0 && carLon === 0)) {
-            console.log("Invalid car position, cannot search POI")
-            return
-        }
-        
-        // Clear previous POIs
-        poiModel.clear()
-        
-        // Map category to Mapbox query types
-        var queryType = ""
-        var poiCategory = ""
-        
-        if (category === "gas" || category === "gas_station") {
-            queryType = "gas station"
-            poiCategory = "gas_station"
-        } else if (category === "parking") {
-            queryType = "parking"
-            poiCategory = "parking"
-        } else {
-            queryType = category
-            poiCategory = category
-        }
-        
-        // Search around current position with a radius (proximity parameter)
-        var http = new XMLHttpRequest()
-        var proximity = carLon + "," + carLat
-        var url = "https://api.mapbox.com/geocoding/v5/mapbox.places/" + 
-                  encodeURIComponent(queryType) + ".json" +
-                  "?access_token=" + mapboxApiKey +
-                  "&proximity=" + proximity +
-                  "&limit=" + root.poiResultLimit +
-                  "&types=poi"
-        
-        console.log("POI search URL:", url)
-        
-        http.open("GET", url, true)
-        http.onreadystatechange = function() {
-            if (http.readyState !== 4) return
-            
-            if (http.status !== 200) {
-                console.log("POI search error:", http.status, http.responseText)
-                return
-            }
-            
-            try {
-                var json = JSON.parse(http.responseText)
-                console.log("POI search results:", json.features ? json.features.length : 0, "items")
-                
-                if (json.features && json.features.length > 0) {
-                    for (var i = 0; i < json.features.length; i++) {
-                        var feature = json.features[i]
-                        var coords = feature.center
-                        var name = feature.text || feature.place_name || "POI"
-                        
-                        poiModel.append({
-                            lat: coords[1],
-                            lon: coords[0],
-                            name: name,
-                            category: poiCategory
-                        })
-                    }
-                    
-                    console.log("Added", poiModel.count, "POIs to map")
-                } else {
-                    console.log("No POIs found for category:", category)
-                }
-            } catch(e) {
-                console.log("Error parsing POI response:", e)
-            }
-        }
-        
-        http.send()
     }
 }

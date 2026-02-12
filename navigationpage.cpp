@@ -1,5 +1,4 @@
 #include "navigationpage.h"
-#include "qdir.h"
 #include "ui_navigationpage.h"
 #include "telemetrydata.h"
 #include <QCompleter>
@@ -15,8 +14,6 @@ NavigationPage::NavigationPage(QWidget* parent)
     : QWidget(parent), ui(new Ui::NavigationPage)
 {
     ui->setupUi(this);
-
-    qDebug() << "=== INIT: NavigationPage démarrée ===";
 
     // --- 1. CONFIGURATION AUTOCOMPLETION ---
     m_suggestionsModel = new QStringListModel(this);
@@ -45,56 +42,33 @@ NavigationPage::NavigationPage(QWidget* parent)
     // --- 2. CONFIGURATION CARTE QML ---
     m_mapView = new QQuickWidget(this);
 
-    QString apiKey = QString::fromLocal8Bit(qgetenv("MAPBOX_KEY"));
-    if(apiKey.isEmpty()) qDebug() << "!!! ATTENTION: MAPBOX_KEY est vide !!!";
-    else qDebug() << "OK: Clé API trouvée (" << apiKey.left(5) << "...)";
-
+    // Utilisation de la clé en dur pour garantir le fonctionnement
+    QString apiKey = "pk.eyJ1IjoiZWxpYXNnbmQiLCJhIjoiY21saDJrYnE3MDRxMzNmcDdmYWRwYW53aCJ9.PnoyJHAGlyeoffTaYEqTcA";
     m_mapView->rootContext()->setContextProperty("mapboxApiKey", apiKey);
     m_mapView->setResizeMode(QQuickWidget::SizeRootObjectToView);
 
-    // --- CORRECTION CRITIQUE ICI ---
-
-    // On définit la logique de connexion dans une lambda pour pouvoir l'appeler à deux endroits
+    // Connexion des signaux
     auto setupQmlConnections = [this]() {
         QObject* root = m_mapView->rootObject();
         if (!root) return;
-
-        // Pour éviter de connecter 2 fois si on appelle cette fonction plusieurs fois
         disconnect(root, nullptr, this, nullptr);
 
-        qDebug() << ">>> SETUP: Connexion des signaux QML -> C++...";
-
-        // Connexion Route
         connect(root, SIGNAL(routeInfoUpdated(QString,QString)),
                 this, SLOT(onRouteInfoReceived(QString,QString)));
 
-        // Connexion Suggestions
-        bool success = connect(root, SIGNAL(suggestionsUpdated(QString)),
-                               this, SLOT(onSuggestionsReceived(QString)));
-
-        if (success) {
-            qDebug() << ">>> SUCCÈS: Signal suggestionsUpdated connecté !";
-        } else {
-            qDebug() << "!!! ÉCHEC: Impossible de connecter suggestionsUpdated !!!";
-        }
+        connect(root, SIGNAL(suggestionsUpdated(QString)),
+                this, SLOT(onSuggestionsReceived(QString)));
     };
 
-    // 1. On écoute le changement de statut (AVANT de charger la source)
     connect(m_mapView, &QQuickWidget::statusChanged, this, [this, setupQmlConnections](QQuickWidget::Status status){
         if (status == QQuickWidget::Ready) {
-            qDebug() << "EVENT: QML passé à l'état Ready via signal.";
             setupQmlConnections();
-        } else if (status == QQuickWidget::Error) {
-            qDebug() << "!!! ERREUR QML:" << m_mapView->errors();
         }
     });
 
-    // 2. On charge la source (C'est ça qui déclenche le chargement)
     m_mapView->setSource(QUrl("qrc:/map.qml"));
 
-    // 3. Sécurité : Si le chargement était instantané (déjà Ready), on connecte manuellement tout de suite
     if (m_mapView->status() == QQuickWidget::Ready) {
-        qDebug() << "EVENT: QML était déjà Ready immédiatement.";
         setupQmlConnections();
     }
 
@@ -122,40 +96,19 @@ NavigationPage::NavigationPage(QWidget* parent)
         requestRouteForText(ui->editSearch->text());
         ui->editSearch->clearFocus();
     });
-    
-    // POI buttons
-    connect(ui->btnGas, &QPushButton::clicked, this, [this](){
-        if(m_mapView && m_mapView->rootObject()) {
-            QMetaObject::invokeMethod(m_mapView->rootObject(), "searchPOI",
-                                      Q_ARG(QVariant, "gas"));
-        }
-    });
-    
-    connect(ui->btnParking, &QPushButton::clicked, this, [this](){
-        if(m_mapView && m_mapView->rootObject()) {
-            QMetaObject::invokeMethod(m_mapView->rootObject(), "searchPOI",
-                                      Q_ARG(QVariant, "parking"));
-        }
-    });
 }
 
 NavigationPage::~NavigationPage(){ delete ui; }
 
 void NavigationPage::onSuggestionsReceived(const QString& jsonSuggestions) {
-    qDebug() << "\n>>> [C++] RECEPTION DU JSON QML:" << jsonSuggestions;
-
     QJsonDocument doc = QJsonDocument::fromJson(jsonSuggestions.toUtf8());
     QJsonArray arr = doc.array();
-
     QStringList suggestions;
     for(const auto& val : arr) {
         suggestions << val.toString();
     }
-
     m_suggestionsModel->setStringList(suggestions);
-
     if (!suggestions.isEmpty() && ui->editSearch->hasFocus()) {
-        qDebug() << ">>> [C++] Ouverture du Popup";
         m_searchCompleter->complete();
     }
 }
@@ -210,5 +163,3 @@ void NavigationPage::triggerSuggestionsSearch()
                                   Q_ARG(QVariant, query));
     }
 }
-
-

@@ -8,20 +8,13 @@ class SettingsPage : public QWidget {
 public:
     explicit SettingsPage(QWidget* parent=nullptr);
     ~SettingsPage();
-    void bindTelemetry(TelemetryData* t); // unused for now but consistent
-
-    // Accessors for favorite addresses
-    QString getHomeAddress() const;
-    QString getWorkAddress() const;
+    void bindTelemetry(TelemetryData* t);
 
 signals:
-    void themeChanged(int themeIndex); // 0 night, 1 day
+    void themeChanged(int themeIndex);
     void brightnessChanged(int value);
 
 private:
-    void saveSettings();
-    void loadSettings();
-
     Ui::SettingsPage* ui;
     TelemetryData* m_t=nullptr;
 };

@@ -14,7 +14,6 @@
       <string notr="true">
 QFrame{background:#171a21;border-radius:16px;}
 QLabel{color:white;}
-/* Style pour la barre de recherche */
 QLineEdit{height:40px; border-radius:10px; background:#2a2f3a; color:white; padding: 0 10px; font-size:15px; border:1px solid #3d4455;}
 QPushButton{height:48px;border-radius:12px;color:white;background:#222634;font-size:15px;padding:8px;}
 QPushButton:pressed{background:#2d3245;}
@@ -47,7 +46,6 @@ QPushButton:pressed{background:#2d3245;}
         </item>
        </layout>
       </item>
-
 
       <item>
        <widget class="QFrame" name="mapPlaceholder">
@@ -85,27 +83,6 @@ QPushButton:pressed{background:#2d3245;}
         <item><widget class="QPushButton" name="btnCenter"><property name="text"><string>Centrer</string></property></widget></item>
         <item><widget class="QPushButton" name="btnZoomIn"><property name="text"><string>Zoom +</string></property></widget></item>
         <item><widget class="QPushButton" name="btnZoomOut"><property name="text"><string>Zoom -</string></property></widget></item>
-       </layout>
-      </item>
-
-      <item>
-       <layout class="QHBoxLayout" name="rowPOI">
-        <property name="spacing"><number>10</number></property>
-        <item><widget class="QLabel" name="lblPOI"><property name="text"><string>Points d'intérêt:</string></property><property name="styleSheet"><string notr="true">QLabel{font-size:16px;}</string></property></widget></item>
-        <item><widget class="QPushButton" name="btnGas">
-          <property name="text"><string>⛽ Stations</string></property>
-          <property name="minimumWidth"><number>120</number></property>
-        </widget></item>
-        <item><widget class="QPushButton" name="btnParking">
-          <property name="text"><string>P Parkings</string></property>
-          <property name="minimumWidth"><number>120</number></property>
-        </widget></item>
-        <item>
-         <spacer name="spPOI">
-          <property name="orientation"><enum>Qt::Horizontal</enum></property>
-          <property name="sizeHint" stdset="0"><size><width>40</width><height>10</height></size></property>
-         </spacer>
-        </item>
        </layout>
       </item>
 
