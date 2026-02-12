@@ -8,6 +8,7 @@
 #include <QStandardPaths>
 #include <QDebug>
 #include <QCoreApplication>
+#include <QGeoServiceProvider>
 
 int main(int argc, char *argv[]) {
     QLoggingCategory::setFilterRules(
@@ -30,6 +31,8 @@ int main(int argc, char *argv[]) {
     TelemetryData telemetry;
     MockTelemetrySource mock(&telemetry);
     mock.start();
+
+    qDebug() << "Fournisseurs dispo :" << QGeoServiceProvider::availableServiceProviders();
 
     MainWindow w(&telemetry);
     w.showFullScreen();
