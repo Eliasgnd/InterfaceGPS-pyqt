@@ -1,0 +1,16 @@
+release/camerapage.o
+release/homepage.o
+release/main.o
+release/mainwindow.o
+release/mocktelemetrysource.o
+release/navigationpage.o
+release/settingspage.o
+release/telemetrydata.o
+release/qrc_resources.o
+release/moc_camerapage.o
+release/moc_homepage.o
+release/moc_mainwindow.o
+release/moc_mocktelemetrysource.o
+release/moc_navigationpage.o
+release/moc_settingspage.o
+release/moc_telemetrydata.o

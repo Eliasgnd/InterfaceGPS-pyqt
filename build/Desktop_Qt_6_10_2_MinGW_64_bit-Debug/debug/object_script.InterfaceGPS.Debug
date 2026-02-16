@@ -1,0 +1,16 @@
+debug/camerapage.o
+debug/homepage.o
+debug/main.o
+debug/mainwindow.o
+debug/mocktelemetrysource.o
+debug/navigationpage.o
+debug/settingspage.o
+debug/telemetrydata.o
+debug/qrc_resources.o
+debug/moc_camerapage.o
+debug/moc_homepage.o
+debug/moc_mainwindow.o
+debug/moc_mocktelemetrysource.o
+debug/moc_navigationpage.o
+debug/moc_settingspage.o
+debug/moc_telemetrydata.o
