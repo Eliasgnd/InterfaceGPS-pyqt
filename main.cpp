@@ -9,6 +9,7 @@
 #include <QDebug>
 #include <QCoreApplication>
 #include <QGeoServiceProvider>
+#include "gpstelemetrysource.h" // <--- Ajouter l'include
 
 int main(int argc, char *argv[]) {
     QLoggingCategory::setFilterRules(
@@ -18,7 +19,7 @@ int main(int argc, char *argv[]) {
         "qt.network.access.debug=true"
         );
 
-    QCoreApplication::setAttribute(Qt::AA_UseSoftwareOpenGL);
+    //QCoreApplication::setAttribute(Qt::AA_UseSoftwareOpenGL);
 
     QApplication a(argc, argv);
 
@@ -28,9 +29,14 @@ int main(int argc, char *argv[]) {
 
     QNetworkProxyFactory::setUseSystemConfiguration(true);
 
-    TelemetryData telemetry;
+    /*TelemetryData telemetry;
     MockTelemetrySource mock(&telemetry);
-    mock.start();
+    mock.start();*/
+
+    // Option B: Vrai GPS
+    GpsTelemetrySource source(&telemetry);
+
+    source.start("/dev/serial0"); // ou /dev/ttyAMA0 selon votre Pi
 
     qDebug() << "Fournisseurs dispo :" << QGeoServiceProvider::availableServiceProviders();
 

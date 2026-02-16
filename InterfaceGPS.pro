@@ -1,5 +1,5 @@
 # Supprime les anciennes versions et mets exactement ceci :
-QT += core gui widgets positioning location quickwidgets qml quick
+QT += core gui widgets positioning location quickwidgets qml quick serialport
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -11,6 +11,7 @@ CONFIG += c++17
 
 SOURCES += \
     camerapage.cpp \
+    gpstelemetrysource.cpp \
     homepage.cpp \
     main.cpp \
     mainwindow.cpp \
@@ -21,6 +22,7 @@ SOURCES += \
 
 HEADERS += \
     camerapage.h \
+    gpstelemetrysource.h \
     homepage.h \
     mainwindow.h \
     mocktelemetrysource.h \
