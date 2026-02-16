@@ -1,5 +1,7 @@
 # Portage Python (PyQt6)
 
+> Ce dépôt est désormais **PyQt6 uniquement** : les anciens fichiers C++/qmake ont été retirés.
+
 ## Prérequis
 
 ```bash
