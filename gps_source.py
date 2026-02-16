@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import QIODevice, QObject, pyqtSignal
-from PyQt6.QtPositioning import QGeoPositionInfo, QNmeaPositionInfoSource
+# Ajout de QGeoPositionInfoSource pour gérer les erreurs (UpdateTimeoutError)
+from PyQt6.QtPositioning import QGeoPositionInfo, QNmeaPositionInfoSource, QGeoPositionInfoSource
 from PyQt6.QtSerialPort import QSerialPort
 
 from telemetry_data import TelemetryData
@@ -35,7 +36,8 @@ class GpsTelemetrySource(QObject):
         self._nmea.setDevice(self._serial)
 
         self._nmea.positionUpdated.connect(self._on_position_updated)
-        self._nmea.updateTimeout.connect(self._on_timeout)
+        # CORRECTION : updateTimeout n'existe plus, on utilise errorOccurred
+        self._nmea.errorOccurred.connect(self._on_nmea_error)
         self._serial.errorOccurred.connect(self._on_serial_error)
 
     def start(self) -> bool:
@@ -72,9 +74,13 @@ class GpsTelemetrySource(QObject):
         if heading >= 0:
             self._telemetry.setHeading(float(heading))
 
-    def _on_timeout(self) -> None:
-        self._telemetry.setGpsOk(False)
-        self.sourceError.emit("Timeout GPS: aucune trame NMEA reçue")
+    # CORRECTION : Cette fonction est bien alignée (au niveau de la classe)
+    def _on_nmea_error(self, error: QGeoPositionInfoSource.Error) -> None:
+        if error == QGeoPositionInfoSource.Error.UpdateTimeoutError:
+            self._telemetry.setGpsOk(False)
+            self.sourceError.emit("Timeout GPS: aucune trame NMEA reçue")
+        elif error == QGeoPositionInfoSource.Error.AccessError:
+            self.sourceError.emit("Erreur d'accès aux données GPS")
 
     def _on_serial_error(self, error: QSerialPort.SerialPortError) -> None:
         if error == QSerialPort.SerialPortError.NoError:

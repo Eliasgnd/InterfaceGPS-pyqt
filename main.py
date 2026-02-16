@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import argparse
 import sys
+import os  # <--- AJOUT 1
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import QLibraryInfo  # <--- AJOUT 2
 
 try:
-    import resources_rc  # noqa: F401  # Ensure qrc paths are registered for QML/icons
+    import resources_rc
 except Exception:
     resources_rc = None
+
 from gps_source import GpsTelemetrySource
 from main_window import MainWindow
 from mock_source import MockTelemetrySource
@@ -24,10 +27,18 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    # --- DÉBUT DU CORRECTIF QML ---
+    # On force le chemin des plugins pour être sûr que le QML trouve QtLocation
+    os.environ["QT_PLUGIN_PATH"] = QLibraryInfo.path(QLibraryInfo.LibraryPath.PluginsPath)
+    os.environ["QML_IMPORT_PATH"] = QLibraryInfo.path(QLibraryInfo.LibraryPath.QmlImportsPath)
+    os.environ["QML2_IMPORT_PATH"] = QLibraryInfo.path(QLibraryInfo.LibraryPath.QmlImportsPath)
+    # --- FIN DU CORRECTIF QML ---
+
     args = _parse_args()
     app = QApplication(sys.argv)
 
     telemetry = TelemetryData()
+    # ... le reste du code reste identique ...
     window = MainWindow(telemetry)
 
     mock_source = MockTelemetrySource(telemetry, window)
