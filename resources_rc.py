@@ -1,0 +1,1 @@
+"""Generated Qt resources module placeholder.\nRun `python build_resources.py` in an environment with PyQt6 tools to regenerate.\n"""\n
