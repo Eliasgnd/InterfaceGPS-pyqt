@@ -506,6 +506,9 @@ Item {
 
     function getDirectionIconPath(direction) {
         var path = "qrc:/icons/";
+        if (typeof iconsBasePath !== "undefined" && iconsBasePath !== "") {
+            path = iconsBasePath;
+        }
         if (direction === 0) return path + "dir_arrival.svg";
         switch(direction) {
             case 1: return path + "dir_straight.svg";
