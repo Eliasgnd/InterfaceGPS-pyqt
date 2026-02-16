@@ -2,14 +2,11 @@ import QtQuick
 import QtLocation
 import QtPositioning
 import QtQuick.Effects
+import QtQuick.Shapes
 
 Item {
     id: root
     width: 600; height: 400
-
-    // --- CORRECTION ---
-    // J'ai SUPPRIMÉ la ligne "property string mapboxApiKey..."
-    // Le code va maintenant utiliser directement la valeur envoyée par votre C++
 
     // --- PROPRIÉTÉS ---
     property double carLat: 48.2715
@@ -32,7 +29,6 @@ Item {
     property var routeSteps: []
     property int currentStepIndex: 0
     property double lastDistToStep: 999999
-    signal routeReadyForSimulation(var pathObj)
 
     // STATISTIQUES
     property string remainingDistString: "-- km"
@@ -40,7 +36,7 @@ Item {
     property string arrivalTimeString: "--:--"
     property real realRouteSpeed: 13.8
 
-    // TRACÉ
+    // TRACÉ ET TRAFIC MULTICOLORE
     property var routePoints: []
     property var finalDestination: null
     property bool isRecalculating: false
@@ -49,10 +45,13 @@ Item {
     property double manualBearing: 0
 
     property var routeSpeedLimits: []
+    property var routeCongestions: []
+    property var trafficSegments: [] // Ne gère que l'orange et le rouge
 
+    // SIGNAUX
     signal routeInfoUpdated(string distance, string duration)
     signal suggestionsUpdated(string suggestions)
-
+    signal routeReadyForSimulation(var pathObj)
 
     // --- 1. PLUGIN STANDARD (OSM + CartoDB Dark) ---
     Plugin {
@@ -80,14 +79,9 @@ Item {
 
         // Animations fluides
         Behavior on center { enabled: !root.autoFollow && !mapDragHandler.active; CoordinateAnimation { duration: 250; easing.type: Easing.InOutQuad } }
-        Behavior on zoomLevel { NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
-        Behavior on bearing {
-            RotationAnimation {
-                direction: RotationAnimation.Shortest
-                duration: 600
-            }
-        }
-        Behavior on tilt { NumberAnimation { duration: 600 } }
+        Behavior on zoomLevel { NumberAnimation { duration: 800; easing.type: Easing.InOutQuad } }
+        Behavior on bearing { RotationAnimation { direction: RotationAnimation.Shortest; duration: 600 } }
+        Behavior on tilt { NumberAnimation { duration: 800 } }
 
         DragHandler {
             id: mapDragHandler
@@ -106,149 +100,282 @@ Item {
             }
         }
 
+        // --- DESSINATEUR DE ROUTE ---
+        // 1. La ligne bleue de base (mise à jour en temps réel)
         MapPolyline {
             id: visualRouteLine
             line.width: 8
-            line.color: "#33ccff"
+            line.color: "#1db7ff"
             opacity: 0.9
+            z: 1
+        }
+
+        // 2. Les lignes de trafic Orange/Rouge superposées (mises à jour occasionnellement pour zéro lag)
+        MapItemView {
+            model: root.trafficSegments
+            delegate: MapPolyline {
+                line.width: 8
+                line.color: modelData.color
+                path: modelData.path
+                opacity: 1.0
+                z: 2
+            }
         }
 
         MapQuickItem {
-            id: carMarker
-            coordinate: QtPositioning.coordinate(carLat, carLon)
-            anchorPoint.x: carVisual.width / 2; anchorPoint.y: carVisual.height / 2
-            sourceItem: Item {
-                id: carVisual
-                enabled: false
-                width: 64; height: 64
-                Rectangle { anchors.centerIn: parent; width: 50; height: 50; color: "#00a8ff"; opacity: 0.3; radius: 25 }
-                Rectangle {
-                    anchors.centerIn: parent; width: 24; height: 32; color: "white"; radius: 6; border.width: 2; border.color: "#171a21"
-                    Rectangle { width: 24; height: 24; color: "white"; rotation: 45; y: -10; anchors.horizontalCenter: parent.horizontalCenter; border.width: 2; border.color: "#171a21" }
+                    id: carMarker
+                    coordinate: QtPositioning.coordinate(carLat, carLon)
+                    anchorPoint.x: carVisual.width / 2; anchorPoint.y: carVisual.height / 2
+                    z: 10
+
+                    sourceItem: Item {
+                        id: carVisual
+                        width: 100; height: 100
+                        enabled: false
+
+                        // --- LE HALO INTELLIGENT (Corrigé) ---
+                        Rectangle {
+                            id: haloRect // <-- L'ID QUI CORRIGE LE BUG "NULL"
+                            anchors.centerIn: parent
+                            width: 70; height: 70; radius: 35
+                            color: "#D2CAEC"; opacity: 0 // Assorti au cyan de la flèche
+
+                            // Condition : Route en cours ET (vitesse très faible OU arrivé)
+                            property bool pulseActive: (root.routePoints && root.routePoints.length > 0) && (root.carSpeed < 2 || nextInstruction === "Vous êtes arrivé")
+
+                            SequentialAnimation {
+                                running: haloRect.pulseActive // <-- On utilise l'ID ici !
+                                loops: Animation.Infinite
+                                alwaysRunToEnd: true
+
+                                ParallelAnimation {
+                                    NumberAnimation { target: haloRect; property: "opacity"; from: 0.6; to: 0.0; duration: 1500; easing.type: Easing.OutQuad }
+                                    NumberAnimation { target: haloRect; property: "width"; from: 40; to: 90; duration: 1500; easing.type: Easing.OutQuad }
+                                    NumberAnimation { target: haloRect; property: "height"; from: 40; to: 90; duration: 1500; easing.type: Easing.OutQuad }
+                                }
+                            }
+                        }
+
+                        // --- LA FLÈCHE STYLE WAZE ---
+                        Item {
+                            anchors.centerIn: parent
+                            width: 60; height: 60
+
+                            Shape {
+                                anchors.fill: parent
+
+                                ShapePath {
+                                    strokeWidth: 4          // Grosse bordure blanche Waze
+                                    strokeColor: "#370028"  // Bordure Blanche
+                                    fillColor: "#C9A0DC"    // Intérieur Cyan
+
+                                    // Bords et pointes arrondis !
+                                    joinStyle: ShapePath.RoundJoin
+                                    capStyle: ShapePath.RoundCap
+
+                                    // Proportions "trapues" fidèles à Waze
+                                    startX: 30; startY: 10    // Pointe haut
+                                    PathLine { x: 48; y: 46 } // Bas droite
+                                    PathLine { x: 30; y: 36 } // Creux central (moins profond)
+                                    PathLine { x: 12; y: 46 } // Bas gauche
+                                    PathLine { x: 30; y: 10 } // Retour
+                                }
+                            }
+
+                            // L'ombre portée pour l'effet "Flottant 3D"
+                            layer.enabled: true
+                            layer.effect: MultiEffect {
+                                shadowEnabled: true
+                                shadowColor: "#A0000000"
+                                shadowBlur: 10
+                                shadowVerticalOffset: 3
+                            }
+                        }
+                    }
                 }
-            }
-        }
     }
 
-    // --- REQUÊTES API (Utilise mapboxApiKey du C++) ---
+    // --- REQUÊTES API ---
     function requestRouteWithTraffic(startCoord, endCoord) {
-        // Vérification de sécurité
-        if (typeof mapboxApiKey === "undefined" || mapboxApiKey === "") {
-            console.log("ERREUR CRITIQUE: mapboxApiKey n'est pas définie depuis le C++ !");
-            return;
-        }
+        if (typeof mapboxApiKey === "undefined" || mapboxApiKey === "") return;
 
         var url = "https://api.mapbox.com/directions/v5/mapbox/driving-traffic/" +
                   startCoord.longitude + "," + startCoord.latitude + ";" +
                   endCoord.longitude + "," + endCoord.latitude +
-                  "?geometries=geojson&steps=true&overview=full&language=fr&annotations=maxspeed&access_token=" + mapboxApiKey;
+                  "?geometries=geojson&steps=true&overview=full&language=fr&annotations=maxspeed,congestion&access_token=" + mapboxApiKey;
 
         var http = new XMLHttpRequest()
         http.open("GET", url, true);
         http.onreadystatechange = function() {
-            if (http.readyState == 4) {
-                if (http.status == 200) {
-                    try {
-                        var json = JSON.parse(http.responseText);
-                        if (json.routes && json.routes.length > 0) {
-                            var route = json.routes[0];
-                            var durationSec = route.duration;
-                            var distMeters = route.distance;
+            if (http.readyState == 4 && http.status == 200) {
+                try {
+                    var json = JSON.parse(http.responseText);
+                    if (json.routes && json.routes.length > 0) {
+                        var route = json.routes[0];
+                        var durationSec = route.duration;
+                        var distMeters = route.distance;
 
-                            if (durationSec > 0) realRouteSpeed = distMeters / durationSec;
-                            else realRouteSpeed = 13.8;
+                        if (durationSec > 0) realRouteSpeed = distMeters / durationSec;
+                        else realRouteSpeed = 13.8;
 
-                            routeInfoUpdated((distMeters / 1000).toFixed(1) + " km", Math.round(durationSec / 60) + " min");
-                            updateStatsFromDuration(durationSec, distMeters);
+                        routeInfoUpdated((distMeters / 1000).toFixed(1) + " km", Math.round(durationSec / 60) + " min");
+                        updateStatsFromDuration(durationSec, distMeters);
 
-                            // Points
-                            var coords = route.geometry.coordinates;
-                            var newPoints = [];
-                            for (var i = 0; i < coords.length; i++) {
-                                newPoints.push(QtPositioning.coordinate(coords[i][1], coords[i][0]));
-                            }
-                            var simplePath = [];
-                            for (var j = 0; j < coords.length; j++) {
-                                simplePath.push({"lat": coords[j][1], "lon": coords[j][0]});
-                            }
-                            routeReadyForSimulation(simplePath);
-                            routePoints = newPoints;
-                            visualRouteLine.path = routePoints;
-
-                            // Vitesses
-                            if (route.legs && route.legs[0] && route.legs[0].annotation && route.legs[0].annotation.maxspeed) {
-                                routeSpeedLimits = route.legs[0].annotation.maxspeed;
-                            } else {
-                                routeSpeedLimits = [];
-                            }
-
-                            if (route.legs && route.legs.length > 0) {
-                                routeSteps = route.legs[0].steps;
-                                currentStepIndex = 0;
-                                lastDistToStep = 999999;
-                                updateGuidance();
-                            }
-                            isRecalculating = false;
+                        // Extraction des points
+                        var coords = route.geometry.coordinates;
+                        var newPoints = [];
+                        var simplePath = [];
+                        for (var i = 0; i < coords.length; i++) {
+                            newPoints.push(QtPositioning.coordinate(coords[i][1], coords[i][0]));
+                            simplePath.push({"lat": coords[i][1], "lon": coords[i][0]});
                         }
-                    } catch(e) { console.log("Erreur JSON: " + e) }
-                } else {
-                    console.log("Erreur HTTP Mapbox (" + http.status + "): " + http.responseText);
-                }
+                        routePoints = newPoints;
+                        root.trafficSegments = []; // On réinitialise le trafic
+
+                        routeReadyForSimulation(simplePath);
+
+                        // Vitesses et Trafic
+                        if (route.legs && route.legs[0] && route.legs[0].annotation) {
+                            routeSpeedLimits = route.legs[0].annotation.maxspeed ? route.legs[0].annotation.maxspeed : [];
+                            routeCongestions = route.legs[0].annotation.congestion ? route.legs[0].annotation.congestion : [];
+                        } else {
+                            routeSpeedLimits = [];
+                            routeCongestions = [];
+                        }
+
+                        if (route.legs && route.legs.length > 0) {
+                            routeSteps = route.legs[0].steps;
+                            currentStepIndex = 0;
+                            lastDistToStep = 999999;
+                            updateGuidance();
+                        }
+                        isRecalculating = false;
+                    }
+                } catch(e) { console.log("Erreur JSON: " + e) }
             }
         }
         http.send();
     }
 
-    // --- FONCTIONS VISUELLES ---
+    // --- FONCTIONS VISUELLES ET TRAFIC ---
     function updateRouteVisuals() {
-        if (routePoints.length === 0) {
+        if (!root.routePoints || root.routePoints.length === 0) {
+            root.trafficSegments = [];
             visualRouteLine.path = [];
-            speedLimit = -1;
+            root.speedLimit = -1;
             return;
         }
 
+        var carPos = QtPositioning.coordinate(root.carLat, root.carLon);
+        var changed = false;
+        var tempPoints = root.routePoints;
+        var tempLimits = (typeof root.routeSpeedLimits !== "undefined" && root.routeSpeedLimits) ? root.routeSpeedLimits : [];
+        var tempCongestions = (typeof root.routeCongestions !== "undefined" && root.routeCongestions) ? root.routeCongestions : [];
+
+        // ON TROUVE LE SEGMENT LE PLUS PROCHE POUR ÉVITER DE COUPER LES BÂTIMENTS
+        var bestI = 0;
+        var minD = 100000;
+        var searchLimit = Math.min(tempPoints.length - 1, 30);
+        for (var j = 0; j < searchLimit; j++) {
+            var d = distanceToSegment(carPos, tempPoints[j], tempPoints[j+1]);
+            if (d < minD) {
+                minD = d;
+                bestI = j;
+            }
+        }
+
+        // On efface intelligemment tous les points qui sont derrière la voiture
+        if (bestI > 0) {
+            tempPoints.splice(0, bestI);
+            if (tempLimits.length >= bestI) tempLimits.splice(0, bestI);
+            if (tempCongestions.length >= bestI) tempCongestions.splice(0, bestI);
+            changed = true;
+        }
+
+        if (changed) {
+            root.routePoints = tempPoints;
+            if (typeof root.routeSpeedLimits !== "undefined") root.routeSpeedLimits = tempLimits;
+            if (typeof root.routeCongestions !== "undefined") root.routeCongestions = tempCongestions;
+        }
+
+        if (tempLimits.length > 0) {
+            var limitData = tempLimits[0];
+            if (limitData && limitData.speed !== undefined) root.speedLimit = limitData.speed;
+            else if (typeof limitData === 'number') root.speedLimit = limitData;
+        }
+
+        // 1. DESSIN DE LA LIGNE BLEUE (Mise à jour ultra rapide, suit parfaitement la route)
+        var limit = Math.min(tempPoints.length, 3000);
+        var drawPath = [carPos];
+        if (tempPoints.length > 1) {
+            for (var k = 1; k < limit; k++) drawPath.push(tempPoints[k]);
+        } else if (tempPoints.length === 1) {
+            drawPath.push(tempPoints[0]);
+        }
+        visualRouteLine.path = drawPath;
+
+        // 2. DESSIN DU TRAFIC ORANGE/ROUGE (Mis à jour que quand c'est nécessaire -> Anti-Lag)
+        if (changed || typeof root.trafficSegments === "undefined" || root.trafficSegments.length === 0) {
+            var newSegments = [];
+            var currentPath = [];
+            var currentColor = "none";
+
+            for (var k = 0; k < limit - 1; k++) {
+                var levelK = (k < tempCongestions.length) ? tempCongestions[k] : "unknown";
+                var colorK = "none"; // Par défaut, on ne dessine rien (on laisse voir le bleu)
+
+                if (levelK === "moderate") colorK = "#FF9800"; // Orange
+                else if (levelK === "heavy" || levelK === "severe") colorK = "#F44336"; // Rouge
+
+                if (colorK === "none") {
+                    if (currentColor !== "none") {
+                        newSegments.push({"path": currentPath, "color": currentColor});
+                        currentColor = "none";
+                        currentPath = [];
+                    }
+                } else {
+                    if (currentColor === colorK) {
+                        currentPath.push(tempPoints[k+1]);
+                    } else {
+                        if (currentColor !== "none") {
+                            newSegments.push({"path": currentPath, "color": currentColor});
+                        }
+                        currentPath = [tempPoints[k], tempPoints[k+1]];
+                        currentColor = colorK;
+                    }
+                }
+            }
+            if (currentColor !== "none") {
+                newSegments.push({"path": currentPath, "color": currentColor});
+            }
+            root.trafficSegments = newSegments;
+        }
+    }
+
+    function distanceToSegment(P, A, B) {
+        var d_AB = A.distanceTo(B);
+        if (d_AB < 1) return A.distanceTo(P);
+        var d_AP = A.distanceTo(P);
+        var bearingAB = A.azimuthTo(B);
+        var bearingAP = A.azimuthTo(P);
+        var angleDiff = (bearingAP - bearingAB) * Math.PI / 180.0;
+        var crossTrack = Math.abs(d_AP * Math.sin(angleDiff));
+        var alongTrack = d_AP * Math.cos(angleDiff);
+        if (alongTrack < 0) return d_AP;
+        if (alongTrack > d_AB) return P.distanceTo(B);
+        return crossTrack;
+    }
+
+    function checkIfOffRoute() {
+        if (routePoints.length < 2 || isRecalculating) return;
         var carPos = QtPositioning.coordinate(carLat, carLon);
-        var searchLimit = Math.min(routePoints.length, 50);
-        var closestIndex = -1;
         var minDistance = 100000;
-
+        var searchLimit = Math.min(routePoints.length - 1, 30);
         for (var i = 0; i < searchLimit; i++) {
-            var d = carPos.distanceTo(routePoints[i]);
-            if (d < minDistance) {
-                minDistance = d;
-                closestIndex = i;
-            }
+            var d = distanceToSegment(carPos, routePoints[i], routePoints[i+1]);
+            if (d < minDistance) minDistance = d;
         }
-
-        if (closestIndex > 0) {
-            routePoints.splice(0, closestIndex);
-            if (routeSpeedLimits.length >= closestIndex) {
-                routeSpeedLimits.splice(0, closestIndex);
-            }
-        }
-
-        if (routePoints.length > 0 && carPos.distanceTo(routePoints[0]) < 12) {
-            routePoints.splice(0, 1);
-            if (routeSpeedLimits.length > 0) routeSpeedLimits.splice(0, 1);
-        }
-
-        if (routeSpeedLimits.length > 0) {
-            var limitData = routeSpeedLimits[0];
-            if (limitData && limitData.speed !== undefined) {
-                 speedLimit = limitData.speed;
-            } else if (typeof limitData === 'number') {
-                 speedLimit = limitData;
-            }
-        }
-
-        if (routePoints.length > 0) {
-            var drawPath = [carPos];
-            var limit = Math.min(routePoints.length, 3000);
-            for (var k = 0; k < limit; k++) drawPath.push(routePoints[k]);
-            visualRouteLine.path = drawPath;
-        } else {
-            visualRouteLine.path = [];
-        }
+        if (minDistance > 75) recalculateRoute();
     }
 
     function formatWazeDistance(meters) {
@@ -322,18 +449,6 @@ Item {
         var ah = arrivalDate.getHours();
         var am = arrivalDate.getMinutes();
         arrivalTimeString = ah + ":" + (am < 10 ? "0"+am : am);
-    }
-
-    function checkIfOffRoute() {
-        if (routePoints.length === 0 || isRecalculating) return;
-        var carPos = QtPositioning.coordinate(carLat, carLon);
-        var minDistance = 100000;
-        var searchLimit = Math.min(routePoints.length, 100);
-        for (var i = 0; i < searchLimit; i++) {
-            var d = carPos.distanceTo(routePoints[i]);
-            if (d < minDistance) minDistance = d;
-        }
-        if (minDistance > 100) recalculateRoute();
     }
 
     function searchDestination(address) {
