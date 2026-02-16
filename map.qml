@@ -32,6 +32,7 @@ Item {
     property var routeSteps: []
     property int currentStepIndex: 0
     property double lastDistToStep: 999999
+    signal routeReadyForSimulation(var pathObj)
 
     // STATISTIQUES
     property string remainingDistString: "-- km"
@@ -79,9 +80,14 @@ Item {
 
         // Animations fluides
         Behavior on center { enabled: !root.autoFollow && !mapDragHandler.active; CoordinateAnimation { duration: 250; easing.type: Easing.InOutQuad } }
-        Behavior on zoomLevel { NumberAnimation { duration: 800; easing.type: Easing.InOutQuad } }
-        Behavior on bearing { NumberAnimation { duration: 600 } }
-        Behavior on tilt { NumberAnimation { duration: 800 } }
+        Behavior on zoomLevel { NumberAnimation { duration: 500; easing.type: Easing.InOutQuad } }
+        Behavior on bearing {
+            RotationAnimation {
+                direction: RotationAnimation.Shortest
+                duration: 600
+            }
+        }
+        Behavior on tilt { NumberAnimation { duration: 600 } }
 
         DragHandler {
             id: mapDragHandler
@@ -161,6 +167,11 @@ Item {
                             for (var i = 0; i < coords.length; i++) {
                                 newPoints.push(QtPositioning.coordinate(coords[i][1], coords[i][0]));
                             }
+                            var simplePath = [];
+                            for (var j = 0; j < coords.length; j++) {
+                                simplePath.push({"lat": coords[j][1], "lon": coords[j][0]});
+                            }
+                            routeReadyForSimulation(simplePath);
                             routePoints = newPoints;
                             visualRouteLine.path = routePoints;
 
